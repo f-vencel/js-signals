@@ -1,9 +1,11 @@
 // import analyzeFunction from './analyze.js';
 
+const sigID = Symbol('sigID');
+
 
 function Signal(initialValue) {
   Object.assign(this, initialValue);
-  this.subscribed = [];
+  //this.subscribed = [];
   
   // computed
   // clean
@@ -11,14 +13,32 @@ function Signal(initialValue) {
   // dependencies
   // 
 }
-Object.defineProperty(Signal, 'dirtyDependencies', {
+Object.defineProperty(Signal, 'markDirty', {
   value: function dirty(state) {
-    state.subscribed.forEach(({ __state: s }) => {
-      if (s.clean) {
+    state.subscribed.forEach(({ __state: s}) => {
+      if (s.type === 'effect') s.callback();
+      else if (s.clean) {
         s.clean = false;
         dirty(s);
       }
     });
+  },
+  writable: true,
+  enumerable: false,
+  configurable: true,
+});
+Object.defineProperty(Signal, 'eq', {
+  value: function eq(a, b) {
+    return a === b;
+  },
+  writable: true,
+  enumerable: false,
+  configurable: true,
+});
+Object.defineProperty(Signal, 'isSignal', {
+  value: function isSignal(sig) {
+    if (typeof sig !== 'function') return false;
+    return sig[sigID] === true;
   },
   writable: true,
   enumerable: false,
@@ -29,10 +49,14 @@ function stateGet(value) {
   const state = this.__state;
 
   if (arguments.length === 1) {
-    if (state.value === value) return value;
+    if (typeof value === 'function') value = value(state.value);
 
-    Signal.dirtyDependencies(state);
-    return state.value = value;
+    if (Signal.eq(state.value, value)) return value;
+
+    state.value = value;
+    Signal.markDirty(state);
+
+    return value;
   }
 
   return state.value;
@@ -59,8 +83,6 @@ function computedGet() {
   // has value
   if (state.clean) return state.value;
 
-  state.clean = 'pending';
-
   function hasDepsChanged(state) {
     const dependencies = state.dependencies;
 
@@ -70,7 +92,7 @@ function computedGet() {
       
       // state
       if (d.ref.__state.type === 'state') {
-        if (d.value !== d.ref.__state.value) {
+        if (!Signal.eq(d.value, d.ref.__state.value)) {
           d.value = d.ref.__state.value;
           allClean = false;
         }
@@ -78,7 +100,7 @@ function computedGet() {
       // computed
       else {
         if (d.ref.__state.clean) {
-          if (d.value !== d.ref.__state.value) {
+          if (!Signal.eq(d.value !== d.ref.__state.value)) {
             d.value = d.ref.__state.value;
             allClean = false;
           }
@@ -99,11 +121,14 @@ function computedGet() {
   if (!hasDepsChanged(state)) return state.value;
   
   const newValue = state.callback();
-  if (state.value === newValue) return newValue;
+  if (Signal.eq(state.value, newValue)) return newValue;
   
   state.value = newValue;
   
   return newValue;
+}
+function runEffect() {
+  return this.__state.callback();
 }
 
 Object.defineProperty(Signal, 'state', {
@@ -123,12 +148,39 @@ Object.defineProperty(Signal, 'computed', {
   enumerable: false,
   configurable: true,
 });
+Object.defineProperty(Signal, 'effect', {
+  value: {
+    call: runEffect,
+    run: runEffect
+  },
+  writable: true,
+  enumerable: false,
+  configurable: true,
+});
+
+
+function setUpSignal(sig, state, proto) {
+  Object.setPrototypeOf(sig, proto);
+  Object.defineProperty(sig, '__state', {
+    value: state,
+    writable: true,
+    enumerable: false,
+    configurable: true
+  });
+  Object.defineProperty(sig, sigID, {
+    value: true,
+    writable: true,
+    enumerable: false,
+    configurable: true
+  });
+}
 
 
 export function state(initialValue) {
   const sg = new Signal({
     type: 'state', 
-    value: initialValue
+    value: initialValue,
+    subscribed: []
   });
 
   const obj = function state(value) {
@@ -136,31 +188,51 @@ export function state(initialValue) {
     return obj.get();
   }
 
-  Object.setPrototypeOf(obj, Signal.state);
-  Object.defineProperty(obj, '__state', {
-    value: sg,
-    writable: true,
-    enumerable: false,
-    configurable: true
-  });
+  setUpSignal(obj, sg, Signal.state);
   
   return obj;
 }
 export function computed(callback, dependencies) {
+  if (!Array.isArray(dependencies)) throw new Error('dependencies are not signals');;
+  dependencies.forEach(d => {
+    if (!Signal.isSignal(d)) throw new Error('dependencies are not signals');
+  })
+
   const sg = new Signal({
     type: 'computed',
     computed: false,
     clean: true,
     callback,
-    dependencies: dependencies.map(d => ({ ref: d }))
+    dependencies: dependencies.map(d => ({ ref: d })),
+    subscribed: []
   });
 
-  const obj = function computed(value) {
-    if (arguments.length === 1) return obj.get(value);
+  const obj = function computed() {
     return obj.get();
   }
 
-  Object.setPrototypeOf(obj, Signal.computed);
+  setUpSignal(obj, sg, Signal.computed);
+
+  dependencies.forEach(d => {
+    d.__state.subscribed.push(obj);
+  });
+
+  return obj;
+}
+export function effect(callback, dependencies) {
+  if (!Array.isArray(dependencies)) throw new Error('dependencies are not signals');;
+  dependencies.forEach(d => {
+    if (!Signal.isSignal(d)) throw new Error('dependencies are not signals');
+  })
+
+  const sg = new Signal({
+    type: 'effect',
+    callback
+  });
+
+  const obj = callback;
+  
+  Object.setPrototypeOf(obj, Signal.effect);
   Object.defineProperty(obj, '__state', {
     value: sg,
     writable: true,
@@ -196,25 +268,12 @@ let printParity = computed(() => {
 }, [parity]);
 
 
-console.log(count(), isEven(), parity());
+const coun = state([undefined, 7]);
 
 
-count(count() + 2);
-
-console.log(count(), parity(), printParity());
-
-count(count() + 3);
-
-console.log(count(), parity());
-console.log(count(), parity())
-console.log(printParity());
-
-even('evenn')
-// count(count() + 3)
-console.log(count(), parity(), isEven(), printParity());
-
-// TODO: fix old value, dirty
+let e = effect(() => {
+  console.log('effect called', coun()[1]);
+}, [coun]);
 
 
-
-
+coun(([p, t]) => [t, t + 1]);
