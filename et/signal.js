@@ -1,75 +1,21 @@
 // import analyzeFunction from './analyze.js';
 
 
-export function Signal(type, initialValue) {
-  this.type = type;
-  this.value = initialValue;
+function Signal(initialValue) {
+  Object.assign(initialValue);
   this.subscribed = [];
-  this.dirty = type === 'computed';
-}
-Signal.prototype.get = Signal.prototype.set = function get(value) {
-  const state = this.__state;
-
-  if (state.type === 'computed') {
-    // computed
-    // has value
-    if (state.value.computed === 'pending') throw new Error('circular reference between signals');
-    if (state.value.computed) {
-      // dirty
-      if (state.dirty) {
-        state.dirty = 'pending';
-
-        const dependencies = state.value.dependencies;
-        let i = 0;
-        for (; i < dependencies.length; i++) {
-          if (!Signal.markClean(dependencies[i])) break;
-        }
-        
-        state.dirty = false;
-        if (i === dependencies.length) return state.value.value;
-
-        const newValue = state.value.callback();
-        if (state.value.value === newValue) return newValue;
-
-        state.value.value = newValue;
-        state.value.dirty = true;
-        state.dirty = true;
-
-        return newValue;
-      }
-      // clean
-      return state.value.value;
-    }
-    // doesn't have value
-    state.value.computed = 'pending';
-    state.value.dependencies.forEach(d => {
-      if (d.ref.__state.type === 'state') d.value = d.ref.__state.value;
-    });
-
-    const newValue = state.value.callback();
-    state.value.value = newValue;
-    state.value.computed = true;
-    if (state.dirty) state.dirty = false;
-
-    return newValue;
-  }
-  // state
-  if (arguments.length === 1) {
-    // set
-    if (state.value === value) return value;
-
-    state.dirty = true;
-    Signal.dirtyDependencies(this);
-    return state.value = value;
-  }
-  // get
-  return state.value;
+  
+  // computed
+  // clean
+  // callback
+  // dependencies
+  // 
 }
 Object.defineProperty(Signal, 'dirtyDependencies', {
-  value: function dirty(signal) {
-    signal.__state.subscribed.forEach((s) => {
-      if (!s.__state.dirty) {
-        s.__state.dirty = true;
+  value: function dirty(state) {
+    state.subscribed.forEach(({ __state: s }) => {
+      if (s.clean) {
+        s.clean = false;
         dirty(s);
       }
     });
@@ -116,16 +62,110 @@ Object.defineProperty(Signal, 'markClean', {
   configurable: true,
 });
 
+function stateGet(value) {
+  const state = this.__state;
+
+  if (arguments.length === 1) {
+    if (state.value === value) return value;
+
+    Signal.dirtyDependencies(state);
+    return state.value = value;
+  }
+
+  return state.value;
+}
+function computedGet(value) {
+  const state = this.__state;
+
+  // doesn't have value
+  if (state.computed === 'pending') throw new Error('circular reference between signals');
+  if (!state.computed) {
+    state.computed = 'pending';
+    state.dependencies.forEach(d => {
+      d.value = d.ref();
+    });
+    
+    const newValue = state.callback();
+    state.value = newValue;
+    state.computed = true;
+    if (!state.clean) state.clean = true;
+    
+    return newValue;
+  }
+
+  // has value
+  if (state.clean) return state.value;
+
+  state.clean = 'pending';
+
+  function hasDepsChanged(state) {
+    const dependencies = state.dependencies;
+
+    let allClean = true;
+    for (let i = 0; i < dependencies.length; i++) {
+      const d = dependencies[i];
+      
+      // state
+      if (d.ref.__state.type === 'state') {
+        if (d.value !== d.ref.__state.value) {
+          d.value = d.ref.__state.value;
+          break;
+        }
+      }
+      // computed
+      else {
+        hasDepsChanged(d.ref)
+        // TODO
+      }
+    }
+    
+    if (allClean) return false;
+    return true;
+  }
+
+  if (hasDepsChanged(state)) return state.value;
+  
+  const newValue = state.callback();
+  if (state.value.value === newValue) return newValue;
+  
+  state.value.value = newValue;
+  state.value.dirty = true;
+  state.dirty = true;
+  
+  return newValue;
+}
+Object.defineProperty(Signal, 'state', {
+  value: {
+    get: stateGet,
+    set: stateSet
+  },
+  writable: true,
+  enumerable: false,
+  configurable: true,
+});
+Object.defineProperty(Signal, 'computed', {
+  value: {
+    get: computedGet,
+    set: computedGet
+  },
+  writable: true,
+  enumerable: false,
+  configurable: true,
+});
+
 
 export function state(initialValue) {
-  const sg = new Signal('state', initialValue);
+  const sg = new Signal({
+    type: 'state', 
+    value: initialValue
+  });
 
   const obj = function state(value) {
     if (arguments.length === 1) return obj.get(value);
     return obj.get();
   }
 
-  Object.setPrototypeOf(obj, Signal.prototype);
+  Object.setPrototypeOf(obj, Signal.state);
   Object.defineProperty(obj, '__state', {
     value: sg,
     writable: true,
@@ -137,8 +177,10 @@ export function state(initialValue) {
 }
 
 export function computed(callback, dependencies) {
-  const sg = new Signal('computed', { 
+  const sg = new Signal({
+    type: 'computed',
     computed: false,
+    clean: true,
     callback,
     dependencies: dependencies.map(d => ({ ref: d }))
   });
@@ -148,7 +190,7 @@ export function computed(callback, dependencies) {
     return obj.get();
   }
 
-  Object.setPrototypeOf(obj, Signal.prototype);
+  Object.setPrototypeOf(obj, Signal.computed);
   Object.defineProperty(obj, '__state', {
     value: sg,
     writable: true,
@@ -203,3 +245,7 @@ even('evenn')
 console.log(count(), parity(), isEven(), printParity());
 
 // TODO: fix old value, dirty
+
+
+
+
