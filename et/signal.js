@@ -2,7 +2,7 @@
 
 
 function Signal(initialValue) {
-  Object.assign(initialValue);
+  Object.assign(this, initialValue);
   this.subscribed = [];
   
   // computed
@@ -24,43 +24,6 @@ Object.defineProperty(Signal, 'dirtyDependencies', {
   enumerable: false,
   configurable: true,
 });
-Object.defineProperty(Signal, 'markClean', {
-  value: function markClean(dependency) {
-    const state = dependency.ref.__state;
-    if (state.dirty === 'pending') throw new Error('circular reference between signals at recomputing');
-    if (!state.dirty) return true;
-
-    if (state.type === 'computed') {
-      if (state.value.dirty) return false;
-      state.dirty = 'pending';
-      // computed
-      const dependencies = state.value.dependencies;
-      let i = 0;
-      for (; i < dependencies.length; i++) {
-        if (!markClean(dependencies[i])) break;
-      }
-
-      state.dirty = false;
-      if (i === dependencies.length) return true;
-
-      const newValue = state.value.callback();
-      if (state.value.value === newValue) return true;
-
-      state.value.value = newValue;
-      state.value.dirty = true;
-      state.dirty = true;
-      
-      return false;
-    }
-    // state
-    if (dependency.value === state.value) return true;
-    dependency.value = state.value;
-    return false;
-  },
-  writable: true,
-  enumerable: false,
-  configurable: true,
-});
 
 function stateGet(value) {
   const state = this.__state;
@@ -74,7 +37,7 @@ function stateGet(value) {
 
   return state.value;
 }
-function computedGet(value) {
+function computedGet() {
   const state = this.__state;
 
   // doesn't have value
@@ -109,13 +72,21 @@ function computedGet(value) {
       if (d.ref.__state.type === 'state') {
         if (d.value !== d.ref.__state.value) {
           d.value = d.ref.__state.value;
-          break;
+          allClean = false;
         }
       }
       // computed
       else {
-        hasDepsChanged(d.ref)
-        // TODO
+        if (d.ref.__state.clean) {
+          if (d.value !== d.ref.__state.value) {
+            d.value = d.ref.__state.value;
+            allClean = false;
+          }
+        }
+        else {
+          d.value = d.ref.get();
+          allClean = false;
+        }
       }
     }
     
@@ -123,21 +94,22 @@ function computedGet(value) {
     return true;
   }
 
-  if (hasDepsChanged(state)) return state.value;
+  state.clean = true;
+
+  if (!hasDepsChanged(state)) return state.value;
   
   const newValue = state.callback();
-  if (state.value.value === newValue) return newValue;
+  if (state.value === newValue) return newValue;
   
-  state.value.value = newValue;
-  state.value.dirty = true;
-  state.dirty = true;
+  state.value = newValue;
   
   return newValue;
 }
+
 Object.defineProperty(Signal, 'state', {
   value: {
     get: stateGet,
-    set: stateSet
+    set: stateGet
   },
   writable: true,
   enumerable: false,
@@ -145,8 +117,7 @@ Object.defineProperty(Signal, 'state', {
 });
 Object.defineProperty(Signal, 'computed', {
   value: {
-    get: computedGet,
-    set: computedGet
+    get: computedGet
   },
   writable: true,
   enumerable: false,
@@ -175,7 +146,6 @@ export function state(initialValue) {
   
   return obj;
 }
-
 export function computed(callback, dependencies) {
   const sg = new Signal({
     type: 'computed',
@@ -204,7 +174,6 @@ export function computed(callback, dependencies) {
 
   return obj;
 }
-
 
 
 let count = state(4);
