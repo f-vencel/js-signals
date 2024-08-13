@@ -36,37 +36,26 @@ function evaluatePossibleEffects() {
   possibleEffectQueue.forEach(sig => {
     if (sig.checked === mustRecall) return
 
-    if (!allDepsClean(sig))
-      effectQueue.push(sig)
-
-    sig.checked = 0
+    if (!allDepsClean(sig)) effectQueue.push(sig)
   })
   possibleEffectQueue.length = 0
 }
 function computeEffects() {
-  if (defaults.runAllEffectsAsync) {
-    defaults.runAllEffectsAsyncFn(effectQueue.map(fn => {
-      fn.checked = 0
-      return () => callBackEffect(fn)
-    }))
-    return
-  }
-
   effectQueue.forEach(fn => {
-    fn.checked = 0
-    fn.call(() => callBackEffect(fn))
+    fn.call(() => {
+      callBackEffect(fn)
+    })
   })
   effectQueue.length = 0
 }
 
 export const defaults = {
   defaultEqual,
-  defaultFnCall,
+  defaultFnCall(def) {
+    return def.async ? defaultAsyncFnCall : defaultFnCall
+  },
   defaultAsyncFnCall,
-  runAllEffectsAsync: false,
-  runAllEffectsAsyncFn: (fnArray) => {
-    Promise.all(fnArray.map(fn => Promise.resolve().then(fn)))
-  }
+  async: false
 }
 
 function defaultEqual(a, b) {
@@ -277,8 +266,8 @@ export function effect(callback, options) {
     equal: options?.equal ?? defaults.defaultEqual,
     call:
       (options?.call === 'async')
-        ? defaults.defaultAsyncFnCall
-        : options?.call ?? defaults.defaultFnCall,
+        ? (fn) => defaults.defaultAsyncFnCall(fn)
+        : options?.call ?? ((fn) => defaults.defaultFnCall(defaults)(fn)),
     dependencies: [],
     dependencyValues: []
   }  
