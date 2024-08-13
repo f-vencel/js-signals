@@ -16,7 +16,7 @@ function captureDependency(sig, isSignal) {
 
   const listener = activeListeners[activeListeners.length - 1]
 
-  if (listener.checked !== exsigs && isSignal) { 
+  if ((listener.checked !== exsigs) || !isSignal) { 
     listener.dependencies.push(sig)
     listener.dependencyValues.push(sig.value)
   }
@@ -104,6 +104,7 @@ function evaluateComputed(sig) {
   const newValue = callBackComputed(sig)
 
   if (!sig.equal(oldValue, newValue)) sig.value = newValue
+  else sig.value = oldValue
 }
 function callBackComputed(sig) {
   if (sig.value === $computing)
