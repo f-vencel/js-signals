@@ -20,12 +20,15 @@ const parity = computed(() => {
 }, isEven)
 
 
-console.log()
+
 
 effect(() => {
   console.log('effect called')
   console.log(parity())
 }, parity)
 
-count(c => c + 2)
-count(c => c + 2)
+
+console.log(parity())
+
+count(c => c + 1)
+// count(c => c + 1)

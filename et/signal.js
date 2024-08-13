@@ -1,5 +1,5 @@
 // TODO: remove implicit dependencies at declaration of computed signals, ->
-// -> making them exolicit. Possibly by using code analizer. ->
+// -> making them explicit. Possibly by using code analizer. ->
 // -> // import analyzeFunction from './analyze.js';  // ?: not functional
 
 const sigID = Symbol('signalID');
@@ -27,7 +27,15 @@ function evaluateComputed(state) {
   if (allDepsClean(state)) return state.value;
   
   const newValue = state.callback();
-  if (!Signal.eq(state.value, newValue)) state.value = newValue;
+  if (!Signal.eq(state.value, newValue)) {
+    state.value = newValue;
+
+    state.subscribed.forEach(({ __state: s }) => {
+      if (s.type === 'effect') {
+        s.changed = true;
+      }
+    });
+  }
 
   return newValue;
 }
@@ -35,7 +43,15 @@ function calculateComputed(state) {
   if (allDepsClean(state)) return;
 
   const newValue = state.callback();
-  if (!Signal.eq(state.value, newValue)) state.value = newValue;
+  if (!Signal.eq(state.value, newValue)) {
+    state.value = newValue;
+
+    state.subscribed.forEach(({ __state: s }) => {
+      if (s.type === 'effect') {
+        s.changed = true;
+      }
+    });
+  }
 }
 
 function computeEffects(callbackQueue) {
@@ -46,15 +62,19 @@ function computeEffects(callbackQueue) {
 
   const newCallbackQueue = [];
   callbackQueue.effect.forEach(e => {
-    if (!allDepsClean(e)) newCallbackQueue.push(e);
+    if (e.changed) {
+      e.changed = false;
+      newCallbackQueue.push(e.callback);
+    }
   })
 
   Signal.runEffects(newCallbackQueue);
 }
 
-function markDirty(state, queue) {
+function markDirty(state, queue, isState) {
   state.subscribed.forEach(({ __state: sub}) => {
     if (sub.type === 'effect') {
+      if (isState) sub.changed = true;
       queue.effect.push(sub);
       return;
     }
@@ -172,7 +192,7 @@ Signal.eq = function eq(a, b) {
   return a === b;
 }
 Signal.runEffects = function runEffects(callbackQueue) {
-  callbackQueue.forEach(e => e.callback());
+  callbackQueue.forEach(e => e());
 }
 Signal.state = state;
 Signal.computed = computed;
@@ -191,7 +211,7 @@ function stateGet(value) {
 
   state.value = value;
 
-  const callbackQueue = markDirty(state, { active: [], effect: [] });
+  const callbackQueue = markDirty(state, { active: [], effect: [] }, true);
   computeEffects(callbackQueue);
 
   return value;
@@ -260,7 +280,9 @@ export function effect(callback, dependencies, initialRun) {
     if (!Signal.isSignal(d)) throw new Error('dependencies are not signals');
   })
 
-  const obj = callback;
+  const obj = function effect() {
+    return obj.run();
+  };
   
   const sg = new Signal('effect', { callback, dependencies, obj });
   setUpSignal(obj, sg, Signal.effectProto, true);
