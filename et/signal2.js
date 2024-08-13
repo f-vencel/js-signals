@@ -1,19 +1,25 @@
 //signal2.js
 
-export const $sigID = Symbol('sigID')
+const $sigID = Symbol('sigID')
 const $unset = Symbol('unset')
 const $computing = Symbol('computing')
 
+const mustRecall = 1
+const mayRecall = 2
+const exsigs = 10
 
-let activeListeners = []
 
-function captureDependency(sig) {
+const activeListeners = []
+
+function captureDependency(sig, isSignal) {
   if (activeListeners.length === 0) return sig.value
 
   const listener = activeListeners[activeListeners.length - 1]
 
-  listener.dependencies.push(sig)
-  listener.dependencyValues.push(sig.value)
+  if (listener.checked !== exsigs && isSignal) { 
+    listener.dependencies.push(sig)
+    listener.dependencyValues.push(sig.value)
+  }
 
   if (!sig.subscribed.includes(listener)) {
     sig.subscribed.push(listener)
@@ -27,23 +33,50 @@ const possibleEffectQueue = []
 const effectQueue = []
 
 function evaluatePossibleEffects() {
-  if (possibleEffectQueue.length === 0) return
-
   possibleEffectQueue.forEach(sig => {
-    if (sig.checked) return
-    
+    if (sig.checked === mustRecall) return
+
+    if (!allDepsClean(sig))
+      effectQueue.push(sig)
+
+    sig.checked = 0
   })
+  possibleEffectQueue.length = 0
 }
 function computeEffects() {
-  effectQueue.forEach(fn => fn.call(fn.callback))
+  if (defaults.runAllEffectsAsync) {
+    defaults.runAllEffectsAsyncFn(effectQueue.map(fn => {
+      fn.checked = 0
+      return () => callBackEffect(fn)
+    }))
+    return
+  }
+
+  effectQueue.forEach(fn => {
+    fn.checked = 0
+    fn.call(() => callBackEffect(fn))
+  })
+  effectQueue.length = 0
 }
 
+export const defaults = {
+  defaultEqual,
+  defaultFnCall,
+  defaultAsyncFnCall,
+  runAllEffectsAsync: false,
+  runAllEffectsAsyncFn: (fnArray) => {
+    Promise.all(fnArray.map(fn => Promise.resolve().then(fn)))
+  }
+}
 
 function defaultEqual(a, b) {
   return Object.is(a, b)
 }
-function defaultCall(fn) {
+function defaultFnCall(fn) {
   fn()
+}
+function defaultAsyncFnCall(fn) {
+  queueMicrotask(fn)
 }
 
 function allDepsClean(sig) {
@@ -73,22 +106,44 @@ function evaluateComputed(sig) {
   if (!sig.equal(oldValue, newValue)) sig.value = newValue
 }
 function callBackComputed(sig) {
-  activeListeners.push(sig)
+  if (sig.value === $computing)
+    throw new Error('cycle in signals\n//? (shouldn\'t be thrown, because this signal was already successfully computed)')
+  sig.value = $computing
+  
   const oldDependencies = sig.dependencies
   sig.dependencies = []
-  sig.dependencyValues.length
+  sig.dependencyValues.length = 0
 
-  if (sig.value === $computing) throw new Error('cycle in signals\n//? (shouldn\'t be thrown, because this signal was already successfully computed)')
-  sig.value = $computing
-
+  activeListeners.push(sig)
+  
   const newValue = sig.callback()
-
+  
   activeListeners.pop()
+
   oldDependencies.forEach(dep => {
     if (!sig.dependencies.includes(dep)) {
-      const index = dep.subscribed.indexOf(sig)
+      dep.subscribed.splice(dep.subscribed.indexOf(sig), 1)
+    }
+  })
+  
+  return newValue
+}
+function callBackEffect(sig) {
+  const oldDependencies = sig.dependencies
+  sig.dependencies = []
+  sig.dependencyValues.length = 0
 
-      dep.subscribed.splice(index, 1)
+  activeListeners.push(sig)
+  sig.checked = exsigs
+  
+  const newValue = sig.callback()
+  
+  activeListeners.pop()
+  sig.checked = 0
+  
+  oldDependencies.forEach(dep => {
+    if (!sig.dependencies.includes(dep)) {
+      dep.subscribed.splice(dep.subscribed.indexOf(sig), 1)
     }
   })
   
@@ -105,12 +160,15 @@ function markSubscribedDirty(sig, fromState) {
   sig.subscribed.forEach(sub => {
     if (sub.type === 'effect') {
       if (fromState) {
-        sub.checked = true
-        effectQueue.push(sub.callback)
+        if (sub.checked === mustRecall) return
+
+        sub.checked = mustRecall  // effect certainly needs to be recalled
+        effectQueue.push(sub)
       }
       else {
-        if (sub.inPossible || sub.checked) return
-        sub.inPossible = true
+        if (sub.checked) return
+
+        sub.checked = mayRecall  // effect needs to be checked for recall
         possibleEffectQueue.push(sub)
       }
       return
@@ -124,7 +182,7 @@ function markSubscribedDirty(sig, fromState) {
 }
 
 function getSignal(sig) {
-  return captureDependency(sig)
+  return captureDependency(sig, true)
 }
 function setSignal(sig, value) {
   if (typeof value === 'function') value = value(sig.value)
@@ -133,7 +191,7 @@ function setSignal(sig, value) {
 
   sig.value = value
 
-  markSubscribedDirty(sig)
+  markSubscribedDirty(sig, true)
 
   evaluatePossibleEffects()
 
@@ -164,7 +222,10 @@ function signalToString(sig) {
   return `[signal ${sig.value}]`
 }
 function computedToString(sig) {
-  return `[signal ${getComputed(sig)}]`
+  return `[computed ${getComputed(sig)}]`
+}
+function effectToString(sig) {
+  return `[effect: ${sig.callback}]`
 }
 
 export function signal(init, options) {
@@ -176,7 +237,7 @@ export function signal(init, options) {
   sig[$sigID] = {
     value: init,
     subscribed: [],
-    equal: options?.equal ?? defaultEqual
+    equal: options?.equal ?? defaults.defaultEqual
   }
 
   sig.get = () => getSignal(sig[$sigID])
@@ -192,15 +253,39 @@ export function computed(callback, options) {
   }
   
   sig[$sigID] = {
+    type: 'computed',
     value: $unset,
     callback,
     clean: true,
     subscribed: [],
-    equal: options?.equal ?? defaultEqual
+    equal: options?.equal ?? defaults.defaultEqual
   }
 
   sig.get = () => getComputed(sig[$sigID])
   sig.toString = () => computedToString(sig[$sigID])
 
   return sig
+}
+
+export function effect(callback, options) {
+  const effect = () => effect.run()
+  
+  effect[$sigID] = {
+    type: 'effect',
+    callback,
+    equal: options?.equal ?? defaults.defaultEqual,
+    call:
+      (options?.call === 'async')
+        ? defaults.defaultAsyncFnCall
+        : options?.call ?? defaults.defaultFnCall,
+    dependencies: [],
+    dependencyValues: []
+  }  
+
+  effect.run = () => effect[$sigID].call(() => callBackEffect(effect[$sigID]))
+  effect.toString = () => effectToString(effect[$sigID])
+
+  effect.run()
+
+  return effect
 }
