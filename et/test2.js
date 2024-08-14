@@ -2,6 +2,7 @@ import { signal, computed, effect, defaults } from './signal2.js';
 import * as core from '@angular/core'
 
 
+defaults.async = true
 
 
 const count = signal(9)
@@ -20,6 +21,5 @@ effect(() => {
   console.log(countMod())
 })
 
-defaults.async = false
 isDarkSig(true)
 isDarkSig(false)

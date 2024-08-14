@@ -36,16 +36,14 @@ function evaluatePossibleEffects() {
   possibleEffectQueue.forEach(sig => {
     if (sig.checked === mustRecall) return
 
-    if (!allDepsClean(sig)) effectQueue.push(sig)
+    if (!allDepsClean(sig)) effectQueue.push(() => sig.call(() => {
+      callBackEffect(sig)
+    }))
   })
   possibleEffectQueue.length = 0
 }
 function computeEffects() {
-  effectQueue.forEach(fn => {
-    fn.call(() => {
-      callBackEffect(fn)
-    })
-  })
+  defaults.defaultrunAllFns(effectQueue)
   effectQueue.length = 0
 }
 
@@ -55,7 +53,10 @@ export const defaults = {
     return def.async ? defaultAsyncFnCall : defaultFnCall
   },
   defaultAsyncFnCall,
-  async: false
+  async: false,
+  defaultrunAllFns: (fnArray) => {
+    fnArray.forEach(fn => fn())
+  }
 }
 
 function defaultEqual(a, b) {
@@ -153,7 +154,9 @@ function markSubscribedDirty(sig, fromState) {
         if (sub.checked === mustRecall) return
 
         sub.checked = mustRecall  // effect certainly needs to be recalled
-        effectQueue.push(sub)
+        effectQueue.push(() => sub.call(() => {
+          callBackEffect(sub)
+        }))
       }
       else {
         if (sub.checked) return
