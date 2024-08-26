@@ -28,19 +28,20 @@ import * as core from '@angular/core'
 const a = signal(0);
 const b = computed(() => {
   console.log('b')
-  return a() - a()
+  return a() + a()
 })
 b()
 
 effect(() => {
   console.log('effect')
   b()
+  a.set(a => a + 1)
 })
 
-a(2)
-a(3)
-a(4)
-a(66)
+// a(2)
+// a(3)
+// a(4)
+// a(66)
 
 // console.log(b())
 

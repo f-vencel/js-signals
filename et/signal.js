@@ -1,6 +1,8 @@
 // TODO: remove implicit dependencies at declaration of computed signals, ->
 // -> making them explicit. Possibly by using code analizer. ->
 // -> // import analyzeFunction from './analyze.js';  // ?: not functional
+// UPDATE:
+// see `signal2.js` for details
 
 const sigID = Symbol('signalID');
 
