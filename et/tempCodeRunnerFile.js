@@ -1,1 +1,0 @@
-function ii() { console.log('alma') }
