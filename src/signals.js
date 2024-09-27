@@ -1,4 +1,32 @@
-//signal2.js
+// signals.js
+//
+//
+// Description: 
+// 
+// An implementation of signals in javascript inspired by the angular framework
+// It provides functions (signal, computed) to store states and computed values
+// It also provides an effect function to set effects that run on change of thier dependencies
+// You can set equality functions,
+// You can also set callback functions on computed values and effects to call them asynchronously
+//
+//
+// 
+// 
+// Licence: 
+//
+// “Commons Clause” License Condition v1.0
+//
+// The Software is provided to you by the Licensor under the License, as defined below, subject to the following condition.
+//
+// Without limiting other conditions in the License, the grant of rights under the License will not include, and the License does not grant to you, the right to Sell the Software.
+//
+// For purposes of the foregoing, “Sell” means practicing any or all of the rights granted to you under the License to provide to third parties, for a fee or other consideration (including without limitation fees for hosting or consulting/ support services related to the Software), a product or service whose value derives, entirely or substantially, from the functionality of the Software. Any license notice or attribution required by the License must also include this Commons Clause License Condition notice.
+//
+// License: [i.e. Apache 2.0]
+//
+//
+
+
 
 const $sigID = Symbol('sigID')
 const $unset = Symbol('unset')
@@ -7,6 +35,7 @@ const $computing = Symbol('computing')
 const mustRecall = 1
 const mayRecall = 2
 const inRecall = 10
+const checked = 0
 
 
 const activeListeners = []
@@ -53,8 +82,8 @@ function evaluatePossibleEffects() {
     if (sig.checked === mustRecall) return
 
     // adds the effect to the effect-callbackQueue if some of its dependencies have changed
-    if (!allDepsClean(sig)) effectQueue.push(effectCallbackFn(sig))
-    else sig.checked = 0
+    if (!allDepsClean(sig)) effectQueue.push(getEffectCallbackFn(sig))
+    else sig.checked = checked
   })
   possibleEffectQueue.length = 0
 }
@@ -124,7 +153,7 @@ function callCallBackWithCapture(sig, isEffect) {
   const newValue = sig.callback()
   
   activeListeners.pop()
-  if (isEffect) sig.checked = 0
+  if (isEffect) sig.checked = checked
 
   return newValue
 }
@@ -152,7 +181,7 @@ function evaluateComputed(sig) {
   if (allDepsClean(sig)) return
   
   const oldValue = sig.value
-  const newValue = callBackComputed(sig)
+  const newValue = callComputed(sig)
 
   // sets the new value if its not equal to the old value
   if (!sig.equal(oldValue, newValue)) {
@@ -162,7 +191,7 @@ function evaluateComputed(sig) {
   else sig.value = oldValue
 }
 // calls the computed signal's callback, sets up the new dependencies (run on first access / on access when some of its dependencies change)
-function callBackComputed(sig) {
+function callComputed(sig) {
   setToComputing(sig)
   
   // sets up the new dependencies, and updates the old dependencies if they are no longer a dependence
@@ -176,7 +205,7 @@ function callBackComputed(sig) {
   return newValue
 }
 // calls the effect's callback, sets up the new dependencies (run on initialization / when some of its dependencies change)
-function callBackEffect(sig) {
+function callEffect(sig) {
   const oldDependencies = setNewDependencies(sig)
 
   const newValue = callCallBackWithCapture(sig, true)
@@ -187,20 +216,22 @@ function callBackEffect(sig) {
 }
 
 // returns the callback function for an effect
-function effectCallbackFn(sig) {
-  return () => sig.call(() => callBackEffect(sig))
+function getEffectCallbackFn(sig) {
+  return () => sig.call(() => callEffect(sig))
 }
 
 // marks dirty the subscribed effects
 function markEffectDirty(sig, fromState) {
-  if (fromState) {
-    if (sig.checked === mustRecall) return
+  if (sig.checked === inRecall)
+    throw new Error('loop in effect, effect sets signal(s) that cause(s) it to run\ncallback function: ' + sig.callback + '\n')
+  if (sig.checked === mustRecall) return
 
+  if (fromState) {
     sig.checked = mustRecall  // effect certainly needs to be recalled (async schedule, as in after the marking)
-    effectQueue.push(effectCallbackFn(sig))
+    effectQueue.push(getEffectCallbackFn(sig))
   }
   else {
-    if (sig.checked) return
+    if (sig.checked === mayRecall) return
 
     sig.checked = mayRecall  // effect needs to be checked before recall (async check, as in after the marking)
     possibleEffectQueue.push(sig)
@@ -253,7 +284,7 @@ function getComputed(sig) {
 function getUnsetComputed(sig) {
   setUpDependencies(sig)
 
-  sig.value = callBackComputed(sig)
+  sig.value = callComputed(sig)
   increaseVersion(sig)
       
   return captureDependency(sig)
@@ -323,7 +354,7 @@ export function effect(callback, options) {
   }
   // effect only has computed as dependencies
 
-  effect.run = effectCallbackFn(effect[$sigID])
+  effect.run = getEffectCallbackFn(effect[$sigID])
   effect.toString = () => effectToString(effect[$sigID])
 
   setUpDependencies(effect[$sigID])

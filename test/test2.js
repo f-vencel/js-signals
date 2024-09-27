@@ -25,18 +25,14 @@ import * as core from '@angular/core'
 // isDarkSig(false)
 
 
-const a = signal(0);
-const b = computed(() => {
+const a = core.signal(0);
+const b = core.computed(() => {
   console.log('b')
+  throw new Error('dwdww')
   return a() + a()
 })
 b()
 
-effect(() => {
-  console.log('effect')
-  b()
-  a.set(a => a + 1)
-})
 
 // a(2)
 // a(3)
