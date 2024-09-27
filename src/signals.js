@@ -38,6 +38,7 @@ const inRecall = 10
 const checked = 0
 
 
+let tracked = true
 const activeListeners = []
 
 // pushed the dependency for the most recent listener
@@ -239,6 +240,8 @@ function markEffectDirty(sig, fromState) {
 }
 // marks dirty the subscribed signals (a signal is dirty (not clean) if its dependencies may have changed)
 function markSubscribedDirty(sig, fromState) {
+  if (!tracked) return
+
   sig.subscribed.forEach(sub => {
     if (sub.type === 'effect') {
       markEffectDirty(sub, fromState)
@@ -288,6 +291,9 @@ function getUnsetComputed(sig) {
   increaseVersion(sig)
       
   return captureDependency(sig)
+}
+function destroyEffect(sig) {
+  sig.checked = mustRecall
 }
 
 
@@ -354,6 +360,7 @@ export function effect(callback, options) {
   }
   // effect only has computed as dependencies
 
+  effect.destroy = () => destroyEffect(effect[$sigID])
   effect.run = getEffectCallbackFn(effect[$sigID])
   effect.toString = () => effectToString(effect[$sigID])
 
@@ -361,4 +368,15 @@ export function effect(callback, options) {
   effect.run()
 
   return effect
+}
+
+export function untrack(callback) {
+  if (tracked) {
+    tracked = false
+    callback()
+    tracked = true
+  }
+  else {
+    callback()
+  }
 }
