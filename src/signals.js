@@ -345,6 +345,7 @@ export function signal(init, options) {
     equal: options?.equal ?? defaults.equal,
   }
 
+  signal.asreadonly = () => computed(() => getSignal(sigID))
   signal.get = () => getSignal(sigID)
   signal.set = (value) => setSignal(sigID, value)
   signal.toString = () => signalToString(sigID)
