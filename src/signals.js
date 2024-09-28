@@ -90,6 +90,8 @@ function evaluatePossibleEffects() {
 }
 // calls the effects in the effect-callbackQueue
 function computeEffects() {
+  if (effectQueue.length === 0) return
+
   defaults.runEffectsFn(effectQueue)
   effectQueue.length = 0
 }
@@ -150,8 +152,24 @@ function callCallBackWithCapture(sig, isEffect) {
   // add listener to capture
   activeListeners.push(sig)
   if (isEffect) sig.checked = inRecall
+
+  const options = {
+    onDestroy: (callback) => {
+      if (sig.onDestroy) return
+      sig.onDestroy = callback ?? (() => {})
+    },
+    onInit: (callback) => {
+      if (sig.value !== $unset) return
+      callback()
+    },
+    onNotInit: (callback) => {
+      if (sig.value === $unset) return
+      callback()
+    },
+  }
   
-  const newValue = sig.callback()
+  const newValue = sig.callback(options)
+  sig.value = 0
   
   activeListeners.pop()
   if (isEffect) sig.checked = checked
@@ -191,7 +209,7 @@ function evaluateComputed(sig) {
   }
   else sig.value = oldValue
 }
-// calls the computed signal's callback, sets up the new dependencies (run on first access / on access when some of its dependencies change)
+// calls the computed signal's callback, sets up the new dependencies (run on first access / on access when its dependencies change)
 function callComputed(sig) {
   setToComputing(sig)
   
@@ -205,7 +223,7 @@ function callComputed(sig) {
   
   return newValue
 }
-// calls the effect's callback, sets up the new dependencies (run on initialization / when some of its dependencies change)
+// calls the effect's callback, sets up the new dependencies (run on initialization / when its dependencies change)
 function callEffect(sig) {
   const oldDependencies = setNewDependencies(sig)
 
@@ -294,6 +312,13 @@ function getUnsetComputed(sig) {
 }
 function destroyEffect(sig) {
   sig.checked = mustRecall
+
+  for (const dependency of sig.dependencies) {
+    dependency.subscribed.splice(dependency.subscribed.indexOf(sig), 1)
+  }
+
+  sig.call = (() => {})
+  sig.onDestroy()
 }
 
 
@@ -309,30 +334,28 @@ function effectToString(sig) {
 
 
 export function signal(init, options) {
-  const sig = function signal(value) {
-    if (arguments.length === 1) return sig.set(value)
-    return sig.get()
+  const signal = function (value) {
+    if (arguments.length === 1) return signal.set(value)
+    return signal.get()
   }
   
-  sig[$sigID] = {
+  const sigID = signal[$sigID] = {
     value: init,
     subscribed: [],
     equal: options?.equal ?? defaults.equal,
   }
 
-  sig.get = () => getSignal(sig[$sigID])
-  sig.set = (value) => setSignal(sig[$sigID], value)
-  sig.toString = () => signalToString(sig[$sigID])
+  signal.get = () => getSignal(sigID)
+  signal.set = (value) => setSignal(sigID, value)
+  signal.toString = () => signalToString(sigID)
 
-  return sig
+  return signal
 }
 
 export function computed(callback, options) {
-  const sig = function computed() {
-    return sig.get()
-  }
+  const computed = () => computed.get()
   
-  sig[$sigID] = {
+  const sigID = computed[$sigID] = {
     type: 'computed',
     value: $unset,
     callback,
@@ -341,17 +364,18 @@ export function computed(callback, options) {
     equal: options?.equal ?? defaults.equal
   }
 
-  sig.get = () => getComputed(sig[$sigID])
-  sig.toString = () => computedToString(sig[$sigID])
+  computed.get = () => getComputed(sigID)
+  computed.toString = () => computedToString(sigID)
 
-  return sig
+  return computed
 }
 
 export function effect(callback, options) {
   const effect = () => effect.run()
   
-  effect[$sigID] = {
+  const sigID = effect[$sigID] = {
     type: 'effect',
+    value: $unset,
     callback,
     call:
       (options?.call === 'async')
@@ -360,11 +384,11 @@ export function effect(callback, options) {
   }
   // effect only has computed as dependencies
 
-  effect.destroy = () => destroyEffect(effect[$sigID])
-  effect.run = getEffectCallbackFn(effect[$sigID])
-  effect.toString = () => effectToString(effect[$sigID])
+  effect.destroy = () => destroyEffect(sigID)
+  effect.run = getEffectCallbackFn(sigID)
+  effect.toString = () => effectToString(sigID)
 
-  setUpDependencies(effect[$sigID])
+  setUpDependencies(sigID)
   effect.run()
 
   return effect
