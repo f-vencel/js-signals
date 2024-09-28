@@ -38,14 +38,15 @@ const inRecall = 10
 const checked = 0
 
 
-let tracked = true
+let tracking = true
 const activeListeners = []
 
 // pushed the dependency for the most recent listener
 function pushDependency(listener, sig, isStateSignal) {
   // if listener is an effect and dependency is a state, then we don't register it, as effects only have computed dependencies
+  // as of now, computed signals also only have computed dependencies 
   // only adds it if it doesn't already have the dependency
-  if (!((listener.checked === inRecall) && isStateSignal) && !listener.dependencies.includes(sig)) { 
+  if (!(isStateSignal) && !listener.dependencies.includes(sig)) { 
     listener.dependencies.push(sig)
     listener.dependencyValues.push(sig.value)
     listener.dependencyVersions.push(sig.version)
@@ -148,25 +149,10 @@ function setToComputing(sig) {
   sig.value = $computing
 }
 // calls a computed signal's / effect's callback with dependency capturing
-function callCallBackWithCapture(sig, isEffect) {
+function callCallBackWithCapture(sig, options, isEffect) {
   // add listener to capture
-  activeListeners.push(sig)
   if (isEffect) sig.checked = inRecall
-
-  const options = {
-    onDestroy: (callback) => {
-      if (sig.onDestroy) return
-      sig.onDestroy = callback ?? (() => {})
-    },
-    onInit: (callback) => {
-      if (sig.value !== $unset) return
-      callback()
-    },
-    onNotInit: (callback) => {
-      if (sig.value === $unset) return
-      callback()
-    },
-  }
+  activeListeners.push(sig)
   
   const newValue = sig.callback(options)
   sig.value = 0
@@ -197,7 +183,8 @@ function evaluateComputed(sig) {
   sig.clean = true
 
   // if dependencies are clean then we don't need to reevaluate the signal
-  if (allDepsClean(sig)) return
+  if (!sig.veryDirty && allDepsClean(sig)) return
+  sig.veryDirty = false
   
   const oldValue = sig.value
   const newValue = callComputed(sig)
@@ -217,7 +204,18 @@ function callComputed(sig) {
 
   const oldDependencies = setNewDependencies(sig)
 
-  const newValue = callCallBackWithCapture(sig)
+  const options = {
+    onFirst: (callback) => {
+      if (sig.value !== $unset) return
+      callback()
+    },
+    onNotFirst: (callback) => {
+      if (sig.value === $unset) return
+      callback()
+    },
+  }
+
+  const newValue = callCallBackWithCapture(sig, options)
 
   checkOldDependencies(oldDependencies, sig)
   
@@ -227,7 +225,22 @@ function callComputed(sig) {
 function callEffect(sig) {
   const oldDependencies = setNewDependencies(sig)
 
-  const newValue = callCallBackWithCapture(sig, true)
+  const options = {
+    onDestroy: (callback) => {
+      if (sig.onDestroy) return
+      sig.onDestroy = callback ?? (() => {})
+    },
+    onInit: (callback) => {
+      if (sig.value !== $unset) return
+      callback()
+    },
+    onNotInit: (callback) => {
+      if (sig.value === $unset) return
+      callback()
+    },
+  }
+
+  const newValue = callCallBackWithCapture(sig, options, true)
   
   checkOldDependencies(oldDependencies, sig)
   
@@ -258,7 +271,7 @@ function markEffectDirty(sig, fromState) {
 }
 // marks dirty the subscribed signals (a signal is dirty (not clean) if its dependencies may have changed)
 function markSubscribedDirty(sig, fromState) {
-  if (!tracked) return
+  if (!tracking) return
 
   sig.subscribed.forEach(sub => {
     if (sub.type === 'effect') {
@@ -266,7 +279,9 @@ function markSubscribedDirty(sig, fromState) {
       return
     }
     
-    // if subscribed signal is clean we don't mark it, neither their subscribed signals
+    if (fromState) sub.veryDirty = true
+    
+    // if subscribed signal is clean we don't mark it, neither their subscribed signals (because they have already been marked dirty)
     if (!sub.clean) return
 
     sub.clean = false
@@ -300,6 +315,7 @@ function getComputed(sig) {
   if (sig.value === $unset) return getUnsetComputed(sig)
 
   evaluateComputed(sig)
+
   return captureDependency(sig)
 }
 function getUnsetComputed(sig) {
@@ -364,6 +380,7 @@ export function computed(callback, options) {
     subscribed: [],
     equal: options?.equal ?? defaults.equal
   }
+  // computed signals only has computed signals as dependencies
 
   computed.get = () => getComputed(sigID)
   computed.toString = () => computedToString(sigID)
@@ -383,7 +400,7 @@ export function effect(callback, options) {
         ? defaults.asyncEffectFn
         : options?.call ?? (defaults.async ? defaults.asyncEffectFn : defaults.syncEffectFn),
   }
-  // effect only has computed as dependencies
+  // effect only has computed signals as dependencies
 
   effect.destroy = () => destroyEffect(sigID)
   effect.run = getEffectCallbackFn(sigID)
@@ -396,10 +413,20 @@ export function effect(callback, options) {
 }
 
 export function untrack(callback) {
-  if (tracked) {
-    tracked = false
+  if (tracking) {
+    tracking = false
     callback()
-    tracked = true
+    tracking = true
+  }
+  else {
+    callback()
+  }
+}
+export function track(callback) {
+  if (!tracking) {
+    tracking = true
+    callback()
+    tracking = false
   }
   else {
     callback()
