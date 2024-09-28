@@ -32,9 +32,10 @@ const $sigID = Symbol('sigID')
 const $unset = Symbol('unset')
 const $computing = Symbol('computing')
 
-const mustRecall = 1
+const inQueue = 1
 const mayRecall = 2
 const inRecall = 10
+const paused = inQueue
 const checked = 0
 
 
@@ -81,10 +82,13 @@ const effectQueue = []
 // determines if an effect needs to be called based on the dependencies
 function evaluatePossibleEffects() {
   possibleEffectQueue.forEach(sig => {
-    if (sig.checked === mustRecall) return
+    if (sig.checked === inQueue) return
 
     // adds the effect to the effect-callbackQueue if some of its dependencies have changed
-    if (!allDepsClean(sig)) effectQueue.push(getEffectCallbackFn(sig))
+    if (!allDepsClean(sig)) {
+      sig.checked = inQueue
+      effectQueue.push(sig.run)
+    }
     else sig.checked = checked
   })
   possibleEffectQueue.length = 0
@@ -230,6 +234,10 @@ function callEffect(sig) {
       if (sig.onDestroy) return
       sig.onDestroy = callback ?? (() => {})
     },
+    onLoop: (callback) => {
+      if (sig.onLoop) return
+      sig.onLoop = callback ?? (() => {})
+    },
     onInit: (callback) => {
       if (sig.value !== $unset) return
       callback()
@@ -254,13 +262,16 @@ function getEffectCallbackFn(sig) {
 
 // marks dirty the subscribed effects
 function markEffectDirty(sig, fromState) {
-  if (sig.checked === inRecall)
-    throw new Error('loop in effect, effect sets signal(s) that cause(s) it to run\ncallback function: ' + sig.callback + '\n')
-  if (sig.checked === mustRecall) return
+  if (sig.checked === inRecall) {
+    if (sig.onLoop) sig.onLoop()
+    else
+      throw new Error('loop in effect, effect sets signal(s) that cause(s) it to run\ncallback function: ' + sig.callback + '\n')
+  }
+  if (sig.checked === inQueue) return
 
   if (fromState) {
-    sig.checked = mustRecall  // effect certainly needs to be recalled (async schedule, as in after the marking)
-    effectQueue.push(getEffectCallbackFn(sig))
+    sig.checked = inQueue  // effect certainly needs to be recalled (async schedule, as in after the marking)
+    effectQueue.push(sig.run)
   }
   else {
     if (sig.checked === mayRecall) return
@@ -327,7 +338,7 @@ function getUnsetComputed(sig) {
   return captureDependency(sig)
 }
 function destroyEffect(sig) {
-  sig.checked = mustRecall
+  pauseEffect(sig)
 
   for (const dependency of sig.dependencies) {
     dependency.subscribed.splice(dependency.subscribed.indexOf(sig), 1)
@@ -335,6 +346,12 @@ function destroyEffect(sig) {
 
   sig.call = (() => {})
   sig.onDestroy()
+}
+function pauseEffect(sig) {
+  sig.checked = paused
+}
+function resumeEffect(sig) {
+  sig.checked = checked
 }
 
 
@@ -395,15 +412,22 @@ export function effect(callback, options) {
     type: 'effect',
     value: $unset,
     callback,
-    call:
-      (options?.call === 'async')
-        ? defaults.asyncEffectFn
-        : options?.call ?? (defaults.async ? defaults.asyncEffectFn : defaults.syncEffectFn),
+    call: (options?.call === 'async' || options?.async)
+      ? defaults.asyncEffectFn
+      : options?.call ?? (defaults.async ? defaults.asyncEffectFn : defaults.syncEffectFn),
   }
+  sigID.run = getEffectCallbackFn(sigID)
   // effect only has computed signals as dependencies
 
   effect.destroy = () => destroyEffect(sigID)
-  effect.run = getEffectCallbackFn(sigID)
+  effect.kill = () => destroyEffect(sigID)
+  effect.pause = () => pauseEffect(sigID)
+  effect.stop = () => pauseEffect(sigID)
+  effect.halt = () => pauseEffect(sigID)
+  effect.resume = () => resumeEffect(sigID)
+  effect.continue = () => resumeEffect(sigID)
+
+  effect.run = sigID.run
   effect.toString = () => effectToString(sigID)
 
   setUpDependencies(sigID)
