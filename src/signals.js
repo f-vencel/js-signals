@@ -41,6 +41,10 @@ const $paused = Symbol('paused')
 let tracking = true
 const activeListeners = []
 
+const possibleEffectQueue = []
+const effectQueue = []
+
+
 // pushed the dependency for the most recent listener
 function pushDependency(listener, sig, isStateSignal) {
   // if listener is an effect and dependency is a state, then we don't register it, as effects only have computed dependencies
@@ -75,8 +79,6 @@ function increaseVersion(sig) {
 }
 
 
-const possibleEffectQueue = []
-const effectQueue = []
 
 // determines if an effect needs to be called based on the dependencies
 function evaluatePossibleEffects() {
@@ -93,11 +95,13 @@ function evaluatePossibleEffects() {
   possibleEffectQueue.length = 0
 }
 // calls the effects in the effect-callbackQueue
-function computeEffects() {
+function runEffects() {
   if (effectQueue.length === 0) return
 
-  defaults.runEffectsFn(effectQueue)
+  const copyQueue = effectQueue.slice()
   effectQueue.length = 0
+
+  defaults.runEffectsFn(copyQueue)
 }
 
 export const defaults = {
@@ -170,7 +174,7 @@ function checkOldDependencies(oldDependencies, sig) {
 
 function setToComputing(sig) {
   if (sig.value === $computing)
-    throw new Error('cycle in signals\n//? (shouldn\'t be thrown, because this signal was already successfully computed before)')
+    throw new Error('cycle in signals\n//? (shouldn\'t be thrown, because this signal was already successfully called before)')
   sig.value = $computing
 }
 function setToComputed(sig) {
@@ -289,7 +293,7 @@ function markEffectDirty(sig, fromState, state) {
       if (!sig.onLoop()) return
     }
     else
-      throw new Error('loop in effect, effect sets signal(s) that cause(s) it to run\ncallback function: ' + sig.callback + '\n')
+      throw new Error('loop in effect, effect sets signal(s) that cause(s) it to run in a loop\ncallback function: ' + sig.callback + '\n')
   }
 
   if (sig.value === $inQueue) return
@@ -338,8 +342,12 @@ function markIndirectEffects(sig) {
 function getSignal(sig) {
   return captureDependency(sig, true)
 }
-function setSignal(sig, value) {
-  if (typeof value === 'function') value = value(sig.value)
+function setSignal(sig, value, update) {
+  if (update) {
+    value(sig.value)
+    return
+  }
+  else if (typeof value === 'function') value = value(sig.value)
 
   if (sig.equal(sig.value, value)) return sig.value
 
@@ -347,12 +355,11 @@ function setSignal(sig, value) {
   increaseVersion(sig)
 
   markSubscribedDirty(sig, true, sig)
-
   markIndirectEffects(sig)
 
   evaluatePossibleEffects()
 
-  computeEffects()
+  runEffects()
 
   return value
 }
@@ -416,8 +423,10 @@ export function signal(init, options) {
   }
 
   signal.asreadonly = () => computed(() => getSignal(sigID))
+  signal.ascomputed = signal.asreadonly
   signal.get = () => getSignal(sigID)
   signal.set = (value) => setSignal(sigID, value)
+  signal.update = (value) => setSignal(sigID, value, true)
   signal.toString = () => signalToString(sigID)
 
   return signal
@@ -457,12 +466,12 @@ export function effect(callback, options) {
   // effect only has computed signals as dependencies
 
   effect.destroy = () => destroyEffect(sigID)
-  effect.kill = () => destroyEffect(sigID)
+  effect.kill = effect.destroy
   effect.pause = () => pauseEffect(sigID)
-  effect.stop = () => pauseEffect(sigID)
-  effect.halt = () => pauseEffect(sigID)
+  effect.stop = effect.pause
+  effect.halt = effect.pause
   effect.resume = () => resumeEffect(sigID)
-  effect.continue = () => resumeEffect(sigID)
+  effect.continue = effect.resume
 
   effect.run = sigID.run
   effect.toString = () => effectToString(sigID)
