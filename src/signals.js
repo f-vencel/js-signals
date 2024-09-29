@@ -31,12 +31,11 @@
 const $sigID = Symbol('sigID')
 const $unset = Symbol('unset')
 const $computing = Symbol('computing')
+const $computed = Symbol('computed')
 
-const inQueue = 1
-const mayRecall = 2
-const inRecall = 10
-const paused = inQueue
-const checked = 0
+const $inQueue = Symbol('inQueue')
+const $mayRecall = Symbol('mayRecall')
+const $paused = Symbol('paused')
 
 
 let tracking = true
@@ -82,14 +81,14 @@ const effectQueue = []
 // determines if an effect needs to be called based on the dependencies
 function evaluatePossibleEffects() {
   possibleEffectQueue.forEach(sig => {
-    if (sig.checked === inQueue) return
+    if (sig.value === $inQueue) return
 
     // adds the effect to the effect-callbackQueue if some of its dependencies have changed
     if (!allDepsClean(sig)) {
-      sig.checked = inQueue
+      sig.value = $inQueue
       effectQueue.push(sig.run)
     }
-    else sig.checked = checked
+    else sig.value = $computed
   })
   possibleEffectQueue.length = 0
 }
@@ -103,6 +102,7 @@ function computeEffects() {
 
 export const defaults = {
   equal: defaultEqual,
+  deepEqual,
   syncEffectFn: defaultSyncEffectFn,
   asyncEffectFn: defaultAsyncEffectFn,
   async: false,
@@ -112,6 +112,27 @@ export const defaults = {
 }
 function defaultEqual(a, b) {
   return Object.is(a, b)
+}
+function deepEqual(a, b) {
+  if (a === b) return true
+
+  if (typeof(a) !== typeof(b)) return false
+
+  if (Object.is(a, b)) return true
+  
+  if (typeof(a) !== 'object') return false
+
+  const aKeys = Object.getOwnPropertyNames(b)
+  const bKeys = Object.getOwnPropertyNames(b)
+
+  if (aKeys.length !== bKeys.length) return false
+
+  for (let k in aKeys) {
+    if (!bKeys.includes(k)) return false
+    if (!deepEqual(a[k], b[k])) return false
+  }
+
+  return true
 }
 function defaultSyncEffectFn(fn) {
   return fn()
@@ -152,17 +173,21 @@ function setToComputing(sig) {
     throw new Error('cycle in signals\n//? (shouldn\'t be thrown, because this signal was already successfully computed before)')
   sig.value = $computing
 }
+function setToComputed(sig) {
+  sig.value = $computed
+}
 // calls a computed signal's / effect's callback with dependency capturing
-function callCallBackWithCapture(sig, options, isEffect) {
+function callCallBackWithCapture(sig, options) {
+  setToComputing(sig)
+
   // add listener to capture
-  if (isEffect) sig.checked = inRecall
   activeListeners.push(sig)
   
   const newValue = sig.callback(options)
-  sig.value = 0
   
   activeListeners.pop()
-  if (isEffect) sig.checked = checked
+
+  setToComputed(sig)
 
   return newValue
 }
@@ -182,12 +207,12 @@ function setNewDependencies(sig) {
 }
 
 // evaluates a computed signal if its not clean (it becomes clean after evaluation)
-function evaluateComputed(sig) {
-  if (sig.clean) return
+function evaluateComputed(sig, options) {
+  if (sig.clean && !options?.noCache) return
   sig.clean = true
 
   // if dependencies are clean then we don't need to reevaluate the signal
-  if (!sig.veryDirty && allDepsClean(sig)) return
+  if (!sig.veryDirty && !options?.noCache && allDepsClean(sig)) return
   sig.veryDirty = false
   
   const oldValue = sig.value
@@ -201,11 +226,8 @@ function evaluateComputed(sig) {
   else sig.value = oldValue
 }
 // calls the computed signal's callback, sets up the new dependencies (run on first access / on access when its dependencies change)
-function callComputed(sig) {
-  setToComputing(sig)
-  
+function callComputed(sig) {  
   // sets up the new dependencies, and updates the old dependencies if they are no longer a dependence
-
   const oldDependencies = setNewDependencies(sig)
 
   const options = {
@@ -236,7 +258,7 @@ function callEffect(sig) {
     },
     onLoop: (callback) => {
       if (sig.onLoop) return
-      sig.onLoop = callback ?? (() => {})
+      sig.onLoop = callback ?? (() => true)
     },
     onInit: (callback) => {
       if (sig.value !== $unset) return
@@ -261,32 +283,40 @@ function getEffectCallbackFn(sig) {
 }
 
 // marks dirty the subscribed effects
-function markEffectDirty(sig, fromState) {
-  if (sig.checked === inRecall) {
-    if (sig.onLoop) sig.onLoop()
+function markEffectDirty(sig, fromState, state) {
+  if (sig.value === $computing) {
+    if (sig.onLoop) {
+      if (!sig.onLoop()) return
+    }
     else
       throw new Error('loop in effect, effect sets signal(s) that cause(s) it to run\ncallback function: ' + sig.callback + '\n')
   }
-  if (sig.checked === inQueue) return
+
+  if (sig.value === $inQueue) return
+  if (sig.value === $paused) {
+    state.indirectEffects ??= []
+    if (!state.indirectEffects.includes(sig)) state.indirectEffects.push(sig)
+    return
+  }
 
   if (fromState) {
-    sig.checked = inQueue  // effect certainly needs to be recalled (async schedule, as in after the marking)
+    sig.value = $inQueue  // effect certainly needs to be recalled (async schedule, as in after the marking)
     effectQueue.push(sig.run)
   }
   else {
-    if (sig.checked === mayRecall) return
+    if (sig.value === $mayRecall) return
 
-    sig.checked = mayRecall  // effect needs to be checked before recall (async check, as in after the marking)
+    sig.value = $mayRecall  // effect needs to be checked before recall (async check, as in after the marking)
     possibleEffectQueue.push(sig)
   }
 }
 // marks dirty the subscribed signals (a signal is dirty (not clean) if its dependencies may have changed)
-function markSubscribedDirty(sig, fromState) {
+function markSubscribedDirty(sig, fromState, state) {
   if (!tracking) return
 
   sig.subscribed.forEach(sub => {
     if (sub.type === 'effect') {
-      markEffectDirty(sub, fromState)
+      markEffectDirty(sub, fromState, state)
       return
     }
     
@@ -296,8 +326,13 @@ function markSubscribedDirty(sig, fromState) {
     if (!sub.clean) return
 
     sub.clean = false
-    markSubscribedDirty(sub)
+    markSubscribedDirty(sub, false, state)
   })
+}
+function markIndirectEffects(sig) {
+  for (const effect of sig.indirectEffects ?? []) {
+    if (effect.value !== $paused) markEffectDirty(effect, false, sig)
+  }
 }
 
 function getSignal(sig) {
@@ -311,7 +346,9 @@ function setSignal(sig, value) {
   sig.value = value
   increaseVersion(sig)
 
-  markSubscribedDirty(sig, true)
+  markSubscribedDirty(sig, true, sig)
+
+  markIndirectEffects(sig)
 
   evaluatePossibleEffects()
 
@@ -319,13 +356,13 @@ function setSignal(sig, value) {
 
   return value
 }
-function getComputed(sig) {
+function getComputed(sig, options) {
   if (sig.value === $computing)
     throw new Error('cycle in signals\ncallback function: ' + sig.callback + '\n')
 
   if (sig.value === $unset) return getUnsetComputed(sig)
 
-  evaluateComputed(sig)
+  evaluateComputed(sig, options)
 
   return captureDependency(sig)
 }
@@ -348,10 +385,10 @@ function destroyEffect(sig) {
   sig.onDestroy()
 }
 function pauseEffect(sig) {
-  sig.checked = paused
+  sig.value = $paused
 }
 function resumeEffect(sig) {
-  sig.checked = checked
+  sig.value = $computed
 }
 
 
@@ -387,7 +424,7 @@ export function signal(init, options) {
 }
 
 export function computed(callback, options) {
-  const computed = () => computed.get()
+  const computed = (options) => computed.get(options)
   
   const sigID = computed[$sigID] = {
     type: 'computed',
@@ -399,7 +436,7 @@ export function computed(callback, options) {
   }
   // computed signals only has computed signals as dependencies
 
-  computed.get = () => getComputed(sigID)
+  computed.get = (options) => getComputed(sigID, options)
   computed.toString = () => computedToString(sigID)
 
   return computed
