@@ -260,6 +260,10 @@ function callEffect(sig) {
       if (sig.onDestroy) return
       sig.onDestroy = callback ?? (() => {})
     },
+    onKill: (callback) => {
+      if (sig.onDestroy) return
+      sig.onDestroy = callback ?? (() => {})
+    },
     onLoop: (callback) => {
       if (sig.onLoop) return
       sig.onLoop = callback ?? (() => true)
@@ -269,6 +273,14 @@ function callEffect(sig) {
       callback()
     },
     onNotInit: (callback) => {
+      if (sig.value === $unset) return
+      callback()
+    },
+    onFirst: (callback) => {
+      if (sig.value !== $unset) return
+      callback()
+    },
+    onNotFirst: (callback) => {
       if (sig.value === $unset) return
       callback()
     },
@@ -389,7 +401,7 @@ function destroyEffect(sig) {
   }
 
   sig.call = (() => {})
-  sig.onDestroy()
+  sig.onDestroy?.()
 }
 function pauseEffect(sig) {
   sig.value = $paused
@@ -453,14 +465,19 @@ export function computed(callback, options) {
 
 export function effect(callback, options) {
   const effect = () => effect.run()
+
+  const callFn = options?.call ?? ((fn) => fn())
   
   const sigID = effect[$sigID] = {
     type: 'effect',
     value: $unset,
     callback,
-    call: (options?.call === 'async' || options?.async)
-      ? defaults.asyncEffectFn
-      : options?.call ?? (defaults.async ? defaults.asyncEffectFn : defaults.syncEffectFn),
+    call: (options?.async)
+      ? (fn) => defaults.asyncEffectFn(() => callFn(fn))
+      : (fn) => defaults.syncEffectFn(() => callFn(fn)),
+
+    onDestroy: options?.onDestroy,
+    onLoop: options?.onLoop
   }
   sigID.run = getEffectCallbackFn(sigID)
   // effect only has computed signals as dependencies

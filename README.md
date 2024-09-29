@@ -61,5 +61,103 @@ There are a few things we can see right away:
 
 ### See examples folder for more examples
 
+#### Setting/Getting a signal
+
+```js
+const counter = signal(0);
+
+counter.set(1);
+counter.set(c => c + 1);
+counter(2);
+counter(c => c + 1);
+
+console.log(count())
+console.log(count.get())
+
+const data = signal({
+  name: 'apple',
+  model: 2.4
+})
+
+data.update(o => o.model++)
+```
+
+You can use the `untrack` function to set a signal, but not have any effect of it
+
+```js
+const count = signal(0)
+
+effect(() => console.log(count()))
+
+untrack(() => count.set(1))
+untrack(() => count.set(2))
+```
+
+Or even the `track` function to set a signal inside the `untrack` function
+
+You can nest these as deep as you want
+
+```js
+const count = signal(0)
+const greet = signal('hey')
+
+effect(() => console.log(count()))
+
+untrack(() => {
+  count.set(1)
+  track(() => greet('hello'))
+})
+```
+
+#### Effects
+
+Effect are run when their dependecies change
+
+By default effects run synchronously
+
+You can accept optional function, such as `onDestroy`, `onInit`, `onLoop` to set up callback functions
+
+By default every effect throws an Error if its gets into a loop
+
+the `onLoop` is executed when the effect gets into a loop. It expects a boolean return value, which indicates whether the effect should stay in a loop or not
+
+```js
+const counter = signal(0);
+const counter2 = signal(100);
+const isEven = computed(() => (counter.get() & 1) == 0);
+const parity = computed(() => isEven.get() ? 'even' : 'odd');
+
+const ef = effect(({ onDestroy, onInit }) => {
+  console.log(`parity is ${parity()}`)
+
+  const id = setTimeout(() => {
+    console.log('hey in 5s', 5000);
+  })
+
+  onDestroy(() => {
+    clearTimeout(id);
+  })
+
+  untrack(() => {
+    counter.set(c => c + 10)
+  })
+}, {
+  call: (fn) => {
+    console.log('calling the effect now!');
+    fn();
+    console.log('done!');
+  },
+  async: true,
+})
+
+ef()
+
+// You can stop the effect by calling .destroy()
+ef.destroy()
+
+// You can also pause/resume the effect
+ef.pause()
+ef.resume()
+```
 
 
