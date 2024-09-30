@@ -1,4 +1,4 @@
-import { signal, computed, effect } from '../src/signals.js';
+import { signal, computed, effect } from '../src/index.js';
 
 
 const counter = signal(0);

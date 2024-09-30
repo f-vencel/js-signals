@@ -171,6 +171,12 @@ function checkOldDependencies(oldDependencies, sig) {
     }
   })
 }
+function checkIndirectSignals(sig) {
+  for (const state of sig.indirectSignals ?? []) {
+    state.indirectEffects.splice(state.indirectEffects.indexOf(sig), 1)
+    sig.indirectSignals.splice(sig.indirectSignals.indexOf(state), 1)
+  }
+}
 
 function setToComputing(sig) {
   if (sig.value === $computing)
@@ -286,9 +292,10 @@ function callEffect(sig) {
     },
   }
 
-  const newValue = callCallBackWithCapture(sig, options, true)
+  const newValue = callCallBackWithCapture(sig, options)
   
   checkOldDependencies(oldDependencies, sig)
+  checkIndirectSignals(sig)
   
   return newValue
 }
@@ -296,6 +303,17 @@ function callEffect(sig) {
 // returns the callback function for an effect
 function getEffectCallbackFn(sig) {
   return () => sig.call(() => callEffect(sig))
+}
+
+function signalChangeEffect(sig) {
+  increaseVersion(sig)
+
+  markSubscribedDirty(sig, true, sig)
+  markIndirectEffects(sig)
+
+  evaluatePossibleEffects()
+
+  runEffects()
 }
 
 // marks dirty the subscribed effects
@@ -311,7 +329,10 @@ function markEffectDirty(sig, fromState, state) {
   if (sig.value === $inQueue) return
   if (sig.value === $paused) {
     state.indirectEffects ??= []
+    sig.indirectSignals ??= []
+
     if (!state.indirectEffects.includes(sig)) state.indirectEffects.push(sig)
+    if (!sig.indirectSignals.includes(sig)) sig.indirectSignals.push(state)
     return
   }
 
@@ -364,14 +385,8 @@ function setSignal(sig, value, update) {
   if (sig.equal(sig.value, value)) return sig.value
 
   sig.value = value
-  increaseVersion(sig)
 
-  markSubscribedDirty(sig, true, sig)
-  markIndirectEffects(sig)
-
-  evaluatePossibleEffects()
-
-  runEffects()
+  signalChangeEffect(sig)
 
   return value
 }
@@ -436,6 +451,7 @@ export function signal(init, options) {
 
   signal.asreadonly = () => computed(() => getSignal(sigID))
   signal.ascomputed = signal.asreadonly
+  signal.forceChange = () => signalChangeEffect(sigID)
   signal.get = () => getSignal(sigID)
   signal.set = (value) => setSignal(sigID, value)
   signal.update = (value) => setSignal(sigID, value, true)

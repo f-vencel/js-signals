@@ -1,4 +1,4 @@
-import { signal, computed, effect, untrack, track, defaults } from '../src/signals.js'
+import { signal, computed, effect, untrack, track, defaults } from '../src/index.js'
 
 const name = signal('mark')
 const familyName = signal('Robinson')

@@ -1,4 +1,4 @@
-import { signal, computed } from '../src/signals.js'
+import { signal, computed } from '../src/index.js'
 
 const count = signal(1)
 

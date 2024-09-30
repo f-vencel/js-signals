@@ -5,3 +5,6 @@ node_modules
 test
 
 tempCodeRunnerFile.js
+
+src/analyze.js
+src/signal_old.js
