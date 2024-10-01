@@ -16,3 +16,8 @@ effect(({ onLoop }) => {
 lever(c => !c)
 lever(c => !c)
 lever(c => !c)
+
+const name = objectSignal({
+  name: 'hey',
+  id: 1
+})

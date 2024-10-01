@@ -437,7 +437,7 @@ function effectToString(sig) {
 }
 
 
-export function signal(init, options) {
+function signal(init, options) {
   const signal = function (value) {
     if (arguments.length === 1) return signal.set(value)
     return signal.get()
@@ -459,6 +459,25 @@ export function signal(init, options) {
 
   return signal
 }
+signal.fromObject = function (obj, options) {
+  if (typeof(obj) !== 'object' && typeof(obj) !== 'function') throw new Error('signal initial state is not an object')
+
+  for (const key in obj) {
+    if (typeof(obj[key]) === 'object' || typeof(obj[key]) === 'object') {
+      obj[key] = signal.fromObject(obj[key], options)
+    }
+    else {
+      obj[key] = signal(obj[key], options)
+    }
+  }
+
+  return computed(() => {
+    for (const key in obj) obj[key]()
+    return obj
+  })
+}
+export { signal }
+
 
 export function computed(callback, options) {
   const computed = (options) => computed.get(options)
