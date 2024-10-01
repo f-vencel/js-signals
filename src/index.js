@@ -308,6 +308,8 @@ function getEffectCallbackFn(sig) {
 function signalChangeEffect(sig) {
   increaseVersion(sig)
 
+  if (!tracking) return
+
   markSubscribedDirty(sig, true, sig)
   markIndirectEffects(sig)
 
@@ -349,8 +351,6 @@ function markEffectDirty(sig, fromState, state) {
 }
 // marks dirty the subscribed signals (a signal is dirty (not clean) if its dependencies may have changed)
 function markSubscribedDirty(sig, fromState, state) {
-  if (!tracking) return
-
   sig.subscribed.forEach(sub => {
     if (sub.type === 'effect') {
       markEffectDirty(sub, fromState, state)
