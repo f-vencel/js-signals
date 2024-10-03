@@ -376,6 +376,8 @@ function getSignal(sig) {
   return captureDependency(sig, true)
 }
 function setSignal(sig, value, update) {
+  if (sig.closed) throw new Error("signal is closed, you cannot set it")
+
   if (update) {
     value(sig.value)
     return
@@ -455,6 +457,7 @@ function signal(init, options) {
   signal.get = () => getSignal(sigID)
   signal.set = (value) => setSignal(sigID, value)
   signal.update = (value) => setSignal(sigID, value, true)
+  signal.close = () => sigID.closed = true
   signal.toString = () => signalToString(sigID)
 
   return signal
@@ -477,7 +480,6 @@ signal.fromObject = function (obj, options) {
   })
 }
 export { signal }
-
 
 export function computed(callback, options) {
   const computed = (options) => computed.get(options)
