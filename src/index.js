@@ -558,7 +558,7 @@ export function track(callback) {
 }
 
 export function actionState(fn, initialValue) {
-  const value = initialValue
+  let value = initialValue
 
   const actionState = () => value
 
