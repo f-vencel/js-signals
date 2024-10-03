@@ -556,3 +556,38 @@ export function track(callback) {
     callback()
   }
 }
+
+export function actionState(fn, initialValue) {
+  const value = initialValue
+
+  const actionState = () => value
+
+  actionState.action = () => value = fn(value)
+
+  return actionState
+}
+
+export function previousState(initialValue, maxPrevState = 1) {
+  if (maxPrevState < 1 || maxPrevState > 10) maxPrevState = 1
+  maxPrevState++
+
+  const valueArray = [initialValue]
+
+  const previousState = function (value) {
+    if (arguments.length !== 1) return valueArray[0]
+    
+    valueArray.unshift(value)
+
+    if (valueArray.length >= maxPrevState) valueArray.length = maxPrevState
+
+    return value
+  }
+
+  previousState.previous = function (index = 1) {
+    return valueArray[index]
+  }
+  previousState.prev = previousState.previous
+  previousState.set = previousState.get = previousState
+
+  return previousState
+}
